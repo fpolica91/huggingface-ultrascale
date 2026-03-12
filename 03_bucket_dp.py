@@ -15,6 +15,9 @@ Run with:
   torchrun --nproc_per_node=8 03_bucket_dp.py
 """
 
+from torch.nn.parameter import Parameter
+
+
 import os
 import torch
 import torch.nn as nn
@@ -42,8 +45,8 @@ class GradBucket:
     When all parameters in the bucket have their gradients ready,
     fires a single async all-reduce on the whole bucket.
     """
-    def __init__(self, params, world_size):
-        self.params = list(params)
+    def __init__(self, params: list[torch.nn.Parameter], world_size: int):
+        self.params = list[Parameter](params)
         self.world_size = world_size
         
         # Calculate total size needed
@@ -63,7 +66,7 @@ class GradBucket:
         self.ready_count = 0
         self.handle = None  # async all-reduce handle
     
-    def mark_ready(self, param):
+    def mark_ready(self, param: Parameter):
         """Called when a parameter's gradient is computed during backward."""
         start, end = self.param_slices[param]
         # Copy gradient into the flat buffer
@@ -75,7 +78,7 @@ class GradBucket:
             self.flat_grad /= self.world_size
             # async_op=True → non-blocking, NVLink works while GPU continues
             self.handle = dist.all_reduce(
-                self.flat_grad, op=dist.ReduceOp.SUM, async_op=True
+                tensor=self.flat_grad, op=dist.ReduceOp.SUM, async_op=True
             )
     
     def wait_and_copy_back(self):
@@ -103,7 +106,7 @@ class BucketManager:
     Parameters are added in REVERSE order (matching backward pass order)
     so that the first bucket to fill = the first layers to finish backward.
     """
-    def __init__(self, model, world_size, bucket_size_mb=25):
+    def __init__(self, model: nn.Module, world_size: int, bucket_size_mb: int = 25):
         self.world_size = world_size
         bucket_size = bucket_size_mb * 1024 * 1024 // 4  # float32 = 4 bytes
         
@@ -112,20 +115,20 @@ class BucketManager:
         all_params = list(reversed(all_params))
         
         # Split into buckets
-        self.buckets = []
-        current_bucket_params = []
+        self.buckets: list[GradBucket] = []
+        current_bucket_params: list[Parameter] = []
         current_size = 0
         
         for p in all_params:
             if current_size + p.numel() > bucket_size and current_bucket_params:
-                self.buckets.append(GradBucket(current_bucket_params, world_size))
+                self.buckets.append(GradBucket(params=current_bucket_params, world_size=world_size))
                 current_bucket_params = []
                 current_size = 0
             current_bucket_params.append(p)
             current_size += p.numel()
         
         if current_bucket_params:
-            self.buckets.append(GradBucket(current_bucket_params, world_size))
+            self.buckets.append(GradBucket(params=current_bucket_params, world_size=world_size))
         
         # Map each param to its bucket
         self.param_to_bucket = {}
