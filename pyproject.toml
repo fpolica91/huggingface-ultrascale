@@ -1,0 +1,11 @@
+[project]
+name = "ultrascale-dp"
+version = "0.1.0"
+description = "Step-by-step data parallelism from naive to fully optimized"
+requires-python = ">=3.10"
+dependencies = [
+    "torch",
+]
+
+[tool.uv]
+find-links = ["https://download.pytorch.org/whl/cu124"]
